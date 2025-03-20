@@ -51,12 +51,15 @@
             display: none;
         }
     </style>
-    <script async src="https://unpkg.com/es-module-shims/dist/es-module-shims.js"></script>
+    <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.8.0/dist/es-module-shims.js" crossorigin="anonymous"></script>
     <script type="importmap">
     {
         "imports": {
-            "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
+            "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/",
+            "three/examples/jsm/controls/OrbitControls.js": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/controls/OrbitControls.js",
+            "three/examples/jsm/webxr/VRButton.js": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/VRButton.js",
+            "three/examples/jsm/webxr/XRControllerModelFactory.js": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/XRControllerModelFactory.js"
         }
     }
     </script>
@@ -72,9 +75,9 @@
 
     <script type="module">
         import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        import { VRButton } from 'three/addons/webxr/VRButton.js';
-        import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+        import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+        import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
+        import { XRControllerModelFactory } from 'three/examples/jsm/webxr/XRControllerModelFactory.js';
 
         // Show error messages to the user
         function showError(message) {
