@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CuBiC - 3D Space Battle Map</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+        }
+        #menu {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 10px;
+        }
+        button {
+            padding: 15px 30px;
+            margin: 10px;
+            font-size: 18px;
+            cursor: pointer;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        #returnButton {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            display: none;
+        }
+        #error {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(255, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+    </style>
+    <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/",
+            "three/examples/jsm/controls/OrbitControls": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/controls/OrbitControls.js",
+            "three/examples/jsm/webxr/VRButton": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/VRButton.js",
+            "three/examples/jsm/webxr/XRControllerModelFactory": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/XRControllerModelFactory.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="menu">
+        <h1>CuBiC</h1>
+        <h2>3D Space Battle Map</h2>
+        <button id="normalButton">Play Normal Mode</button>
+        <button id="vrButton">Play VR Mode</button>
+    </div>
+    <button id="returnButton">Return to Menu</button>
+    <div id="error"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+        import { VRButton } from 'three/examples/jsm/webxr/VRButton';
+        import { XRControllerModelFactory } from 'three/examples/jsm/webxr/XRControllerModelFactory';
+
+        // Constants
+        const GRID_SIZE = 16;
+        const CUBE_SIZE = 128; // Main cube size
+        const DOT_SIZE = 0.3; // Reduced from 0.5
+        const DOT_SPACING = CUBE_SIZE / (GRID_SIZE - 1);
+        const INITIAL_LINE_INTERVAL = 500; // Start with lines every 0.5 seconds
+        const SLOW_LINE_INTERVAL = 3000; // Slow down to every 3 seconds
+        const LINE_THRESHOLD = 50; // Number of lines before slowing down
+        const CORNER_CUBE_SIZE = DOT_SIZE * 4; // Make corner cubes 4x the size of dots
+        const ROTATION_SPEED = 0.0002; // Very slow rotation
+        const LINE_WIDTH = 1; // Thin lines
+        const LINE_GROWTH_SPEED = DOT_SPACING / 120; // Speed to complete in 2 seconds (60fps * 2)
+        const MOVEMENT_SPEED = 0.8; // Increased from 0.3
+
+        // Game state
+        let camera, scene, renderer;
+        let controls;
+        let mainCube;
+        let dots = [];
+        let lines = [];
+        let lineGenerationInterval = null;
+        let animationFrameId = null;
+        let isVRMode = false;
+        let controller1, controller2;
+        let controllerGrip1, controllerGrip2;
+        let cameraGroup;
+        let moveForward = false;
+        let moveBackward = false;
+        let moveLeft = false;
+        let moveRight = false;
+        let moveUp = false;
+        let moveDown = false;
+
+        // Corner colors
+        const CORNER_COLORS = [
+            { color: 0x000000, position: [0, 0, 0] },         // Black
+            { color: 0xFF0000, position: [GRID_SIZE-1, 0, 0] }, // Red
+            { color: 0x00FF00, position: [0, GRID_SIZE-1, 0] }, // Green
+            { color: 0x0000FF, position: [0, 0, GRID_SIZE-1] }, // Blue
+            { color: 0xFFFF00, position: [GRID_SIZE-1, GRID_SIZE-1, 0] }, // Yellow
+            { color: 0xFF00FF, position: [GRID_SIZE-1, 0, GRID_SIZE-1] }, // Magenta
+            { color: 0x00FFFF, position: [0, GRID_SIZE-1, GRID_SIZE-1] }, // Cyan
+            { color: 0xFFFFFF, position: [GRID_SIZE-1, GRID_SIZE-1, GRID_SIZE-1] } // White
+        ];
+
+        // UI Elements
+        const menu = document.getElementById('menu');
+        const normalButton = document.getElementById('normalButton');
+        const vrButton = document.getElementById('vrButton');
+        const returnButton = document.getElementById('returnButton');
+
+        // Event Listeners
+        normalButton.addEventListener('click', () => startNormalMode());
+        vrButton.addEventListener('click', () => startVRMode());
+        returnButton.addEventListener('click', () => returnToMenu());
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => { errorDiv.style.display = 'none'; }, 5000);
+        }
+
+        function createCornerCubes() {
+            const cornerGroup = new THREE.Group();
+            
+            CORNER_COLORS.forEach(({ color, position }) => {
+                const geometry = new THREE.BoxGeometry(CORNER_CUBE_SIZE, CORNER_CUBE_SIZE, CORNER_CUBE_SIZE);
+                const material = new THREE.MeshStandardMaterial({
+                    color: color,
+                    emissive: color,
+                    emissiveIntensity: 0.5,
+                    side: THREE.DoubleSide // Render both sides
+                });
+                
+                const cube = new THREE.Mesh(geometry, material);
+                const [x, y, z] = position;
+                const posX = (x - (GRID_SIZE-1)/2) * DOT_SPACING;
+                const posY = (y - (GRID_SIZE-1)/2) * DOT_SPACING;
+                const posZ = (z - (GRID_SIZE-1)/2) * DOT_SPACING;
+                cube.position.set(posX, posY, posZ);
+
+                // Add wireframe for black cube
+                if (color === 0x000000) {
+                    const wireframe = new THREE.LineSegments(
+                        new THREE.EdgesGeometry(geometry),
+                        new THREE.LineBasicMaterial({ 
+                            color: 0xFFFFFF, 
+                            linewidth: LINE_WIDTH,
+                            side: THREE.DoubleSide // Render both sides
+                        })
+                    );
+                    cube.add(wireframe);
+                }
+
+                cornerGroup.add(cube);
+            });
+
+            return cornerGroup;
+        }
+
+        function createDots() {
+            const dotGroup = new THREE.Group();
+            const geometry = new THREE.SphereGeometry(DOT_SIZE, 8, 8);
+            const material = new THREE.MeshStandardMaterial({
+                color: 0x808080,
+                emissive: 0x404040,
+                emissiveIntensity: 0.3, // Reduced from 0.5
+                transparent: true,
+                opacity: 0.2, // Added transparency
+                side: THREE.DoubleSide // Render both sides
+            });
+
+            for (let x = 0; x < GRID_SIZE; x++) {
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    for (let z = 0; z < GRID_SIZE; z++) {
+                        // Skip edges and corners
+                        if ((x === 0 || x === GRID_SIZE-1) && 
+                            (y === 0 || y === GRID_SIZE-1) && 
+                            (z === 0 || z === GRID_SIZE-1)) continue;
+
+                        const dot = new THREE.Mesh(geometry, material);
+                        const posX = (x - (GRID_SIZE-1)/2) * DOT_SPACING;
+                        const posY = (y - (GRID_SIZE-1)/2) * DOT_SPACING;
+                        const posZ = (z - (GRID_SIZE-1)/2) * DOT_SPACING;
+                        
+                        dot.position.set(posX, posY, posZ);
+                        dot.userData.gridPosition = { x, y, z };
+                        dotGroup.add(dot);
+                        dots.push(dot);
+                    }
+                }
+            }
+
+            return dotGroup;
+        }
+
+        function findNearestDot(position, direction, maxSteps) {
+            const startGridPos = {
+                x: Math.round((position.x / DOT_SPACING) + (GRID_SIZE-1)/2),
+                y: Math.round((position.y / DOT_SPACING) + (GRID_SIZE-1)/2),
+                z: Math.round((position.z / DOT_SPACING) + (GRID_SIZE-1)/2)
+            };
+
+            // Don't start from edge positions
+            if (startGridPos.x <= 0 || startGridPos.x >= GRID_SIZE-1 ||
+                startGridPos.y <= 0 || startGridPos.y >= GRID_SIZE-1 ||
+                startGridPos.z <= 0 || startGridPos.z >= GRID_SIZE-1) {
+                return null;
+            }
+
+            let steps = 0;
+            let currentPos = {...startGridPos};
+            let lastValidDot = null;
+
+            while (steps < maxSteps) {
+                currentPos.x += direction.x;
+                currentPos.y += direction.y;
+                currentPos.z += direction.z;
+
+                // Check if we're still within bounds
+                if (currentPos.x <= 0 || currentPos.x >= GRID_SIZE-1 ||
+                    currentPos.y <= 0 || currentPos.y >= GRID_SIZE-1 ||
+                    currentPos.z <= 0 || currentPos.z >= GRID_SIZE-1) {
+                    return lastValidDot; // Return the last valid dot before hitting boundary
+                }
+
+                // Find a dot at this position
+                const targetDot = dots.find(dot => {
+                    const pos = dot.userData.gridPosition;
+                    return pos.x === currentPos.x && 
+                           pos.y === currentPos.y && 
+                           pos.z === currentPos.z;
+                });
+
+                if (targetDot) {
+                    lastValidDot = targetDot;
+                }
+
+                steps++;
+            }
+
+            return lastValidDot;
+        }
+
+        function createRandomLine() {
+            if (dots.length === 0) return;
+
+            const startDot = dots[Math.floor(Math.random() * dots.length)];
+            const directions = [
+                new THREE.Vector3(1, 0, 0),   // Right
+                new THREE.Vector3(-1, 0, 0),  // Left
+                new THREE.Vector3(0, 1, 0),   // Up
+                new THREE.Vector3(0, -1, 0),  // Down
+                new THREE.Vector3(0, 0, 1),   // Forward
+                new THREE.Vector3(0, 0, -1)   // Backward
+            ];
+
+            const direction = directions[Math.floor(Math.random() * directions.length)];
+            const startPoint = startDot.position.clone();
+            
+            // Find target dot in chosen direction
+            const endDot = findNearestDot(startPoint, direction, GRID_SIZE);
+            if (!endDot) return; // Skip if no valid end dot found
+
+            const targetLength = startPoint.distanceTo(endDot.position);
+            
+            // Choose a random corner color for the line
+            const randomCornerColor = CORNER_COLORS[Math.floor(Math.random() * CORNER_COLORS.length)].color;
+
+            // Create growing line
+            const lineGeometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(6); // Two points: start and current end
+            positions[0] = startPoint.x;
+            positions[1] = startPoint.y;
+            positions[2] = startPoint.z;
+            positions[3] = startPoint.x;
+            positions[4] = startPoint.y;
+            positions[5] = startPoint.z;
+            
+            lineGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            const material = new THREE.LineBasicMaterial({
+                color: randomCornerColor,
+                transparent: true,
+                opacity: 0.3,
+                linewidth: LINE_WIDTH,
+                side: THREE.DoubleSide, // Render both sides
+                depthTest: false // Ensure lines are always visible
+            });
+
+            const line = new THREE.Line(lineGeometry, material);
+            line.userData = {
+                startPoint: startPoint.clone(),
+                endPoint: endDot.position.clone(),
+                currentLength: 0,
+                targetLength: targetLength,
+                growing: true
+            };
+            
+            mainCube.add(line);
+            lines.push(line);
+        }
+
+        function updateLines() {
+            lines.forEach(line => {
+                if (line.userData.growing) {
+                    line.userData.currentLength = Math.min(
+                        line.userData.currentLength + LINE_GROWTH_SPEED,
+                        line.userData.targetLength
+                    );
+
+                    if (line.userData.currentLength >= line.userData.targetLength) {
+                        line.userData.growing = false;
+                    }
+
+                    const positions = line.geometry.attributes.position.array;
+                    const direction = line.userData.endPoint.clone()
+                        .sub(line.userData.startPoint)
+                        .normalize();
+                    const endPoint = line.userData.startPoint.clone().add(
+                        direction.multiplyScalar(line.userData.currentLength)
+                    );
+
+                    positions[3] = endPoint.x;
+                    positions[4] = endPoint.y;
+                    positions[5] = endPoint.z;
+
+                    line.geometry.attributes.position.needsUpdate = true;
+                }
+
+                // Subtle pulsing effect for all lines
+                line.material.opacity = 0.3 + Math.sin(Date.now() * 0.001) * 0.1;
+            });
+        }
+
+        function handleKeyDown(event) {
+            switch (event.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyA': moveRight = true; break;
+                case 'KeyD': moveLeft = true; break;
+                case 'Space': moveUp = true; break;
+                case 'ShiftLeft': moveDown = true; break;
+            }
+        }
+
+        function handleKeyUp(event) {
+            switch (event.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyA': moveRight = false; break;
+                case 'KeyD': moveLeft = false; break;
+                case 'Space': moveUp = false; break;
+                case 'ShiftLeft': moveDown = false; break;
+            }
+        }
+
+        function updateCamera() {
+            if (!isVRMode) {
+                const direction = new THREE.Vector3();
+                camera.getWorldDirection(direction);
+                const right = new THREE.Vector3();
+                right.crossVectors(camera.up, direction).normalize();
+
+                const speed = MOVEMENT_SPEED * 2; // Still doubled but base speed is lower
+
+                if (moveForward) camera.position.addScaledVector(direction, speed);
+                if (moveBackward) camera.position.addScaledVector(direction, -speed);
+                if (moveRight) camera.position.addScaledVector(right, speed);
+                if (moveLeft) camera.position.addScaledVector(right, -speed);
+                if (moveUp) camera.position.y += speed;
+                if (moveDown) camera.position.y -= speed;
+
+                // Update OrbitControls target based on movement
+                if (controls) {
+                    controls.target.copy(camera.position).add(direction);
+                }
+            }
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+
+            cameraGroup = new THREE.Group();
+            scene.add(cameraGroup);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.set(0, 0, CUBE_SIZE/2);
+            camera.lookAt(0, 0, 0);
+            cameraGroup.add(camera);
+
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                logarithmicDepthBuffer: true
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            mainCube = new THREE.Group();
+            mainCube.add(createCornerCubes());
+            mainCube.add(createDots());
+            scene.add(mainCube);
+
+            // Start with fast line generation
+            if (lineGenerationInterval) {
+                clearInterval(lineGenerationInterval);
+            }
+            lineGenerationInterval = setInterval(() => {
+                createRandomLine();
+                if (lines.length >= LINE_THRESHOLD) {
+                    clearInterval(lineGenerationInterval);
+                    lineGenerationInterval = setInterval(createRandomLine, SLOW_LINE_INTERVAL);
+                }
+            }, INITIAL_LINE_INTERVAL);
+
+            renderer.domElement.addEventListener('click', () => {
+                renderer.domElement.requestPointerLock();
+            });
+
+            window.addEventListener('resize', onWindowResize, false);
+            window.addEventListener('keydown', handleKeyDown);
+            window.addEventListener('keyup', handleKeyUp);
+        }
+
+        function setupVRControllers() {
+            controller1 = renderer.xr.getController(0);
+            controller2 = renderer.xr.getController(1);
+            cameraGroup.add(controller1);
+            cameraGroup.add(controller2);
+
+            const controllerModelFactory = new XRControllerModelFactory();
+            
+            controllerGrip1 = renderer.xr.getControllerGrip(0);
+            controllerGrip1.add(controllerModelFactory.createControllerModel(controllerGrip1));
+            cameraGroup.add(controllerGrip1);
+            
+            controllerGrip2 = renderer.xr.getControllerGrip(1);
+            controllerGrip2.add(controllerModelFactory.createControllerModel(controllerGrip2));
+            cameraGroup.add(controllerGrip2);
+
+            // Controller event listeners
+            controller1.addEventListener('selectstart', onSelectStart);
+            controller1.addEventListener('selectend', onSelectEnd);
+            controller2.addEventListener('selectstart', onSelectStart);
+            controller2.addEventListener('selectend', onSelectEnd);
+        }
+
+        function onSelectStart(event) {
+            const controller = event.target;
+            controller.userData.isSelecting = true;
+        }
+
+        function onSelectEnd(event) {
+            const controller = event.target;
+            controller.userData.isSelecting = false;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            if (!renderer || !scene || !camera) return;
+            
+            requestAnimationFrame(animate);
+            
+            // Rotate main cube very slowly
+            if (mainCube) {
+                mainCube.rotation.y += ROTATION_SPEED;
+            }
+
+            // Update camera position based on WASD input
+            updateCamera();
+
+            // Update and animate lines
+            updateLines();
+
+            if (controls) controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function animateVR() {
+            renderer.setAnimationLoop(() => {
+                // Handle controller movement
+                if (controller1 && controller1.userData.isSelecting) {
+                    mainCube.rotation.y += ROTATION_SPEED * 20;
+                }
+                if (controller2 && controller2.userData.isSelecting) {
+                    mainCube.rotation.x += ROTATION_SPEED * 20;
+                }
+
+                // Update and animate lines
+                updateLines();
+
+                renderer.render(scene, camera);
+            });
+        }
+
+        function startNormalMode() {
+            isVRMode = false;
+            init();
+            
+            // Setup both OrbitControls and WASD movement
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.minDistance = 1; // Allow moving very close
+            controls.maxDistance = CUBE_SIZE * 3;
+            
+            // Enable keyboard controls
+            controls.enableKeys = false; // Disable default keys
+            controls.mouseButtons = {
+                LEFT: THREE.MOUSE.ROTATE,
+                MIDDLE: THREE.MOUSE.DOLLY,
+                RIGHT: THREE.MOUSE.PAN
+            };
+            
+            menu.style.display = 'none';
+            returnButton.style.display = 'block';
+            
+            animate();
+        }
+
+        function startVRMode() {
+            isVRMode = true;
+            init();
+            setupVRControllers();
+            
+            document.body.appendChild(VRButton.createButton(renderer));
+            renderer.xr.enabled = true;
+            
+            menu.style.display = 'none';
+            returnButton.style.display = 'block';
+            
+            animateVR();
+        }
+
+        function returnToMenu() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            
+            if (isVRMode && renderer) {
+                renderer.setAnimationLoop(null);
+            }
+            
+            if (lineGenerationInterval) {
+                clearInterval(lineGenerationInterval);
+                lineGenerationInterval = null;
+            }
+
+            if (renderer && renderer.domElement && renderer.domElement.parentNode) {
+                renderer.domElement.parentNode.removeChild(renderer.domElement);
+            }
+            
+            const vrButton = document.querySelector('button.webvr-ui-button');
+            if (vrButton && vrButton.parentNode) {
+                vrButton.parentNode.removeChild(vrButton);
+            }
+            
+            menu.style.display = 'block';
+            returnButton.style.display = 'none';
+            document.getElementById('error').style.display = 'none';
+            
+            if (controls) {
+                controls.dispose();
+            }
+
+            // Only clear dots, keep lines
+            dots = [];
+            
+            // Clean up THREE.js objects except lines
+            if (scene) {
+                scene.traverse((object) => {
+                    // Skip lines when disposing
+                    if (lines.includes(object)) return;
+                    
+                    if (object.geometry) object.geometry.dispose();
+                    if (object.material) {
+                        if (Array.isArray(object.material)) {
+                            object.material.forEach(material => material.dispose());
+                        } else {
+                            object.material.dispose();
+                        }
+                    }
+                });
+            }
+        }
+    </script>
+</body>
+</html> 
