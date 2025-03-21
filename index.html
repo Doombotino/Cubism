@@ -78,9 +78,10 @@
     <div id="menu">
         <h1>CuBiC</h1>
         <h2>3D Space Battle Map</h2>
-        <button id="normalButton">Play Normal Mode</button>
-        <button id="vrButton">Play VR Mode</button>
-        <div id="version">v1.6</div>
+        <button id="pcButton">PC Mode</button>
+        <button id="mobileButton">Mobile Mode</button>
+        <button id="vrButton">VR Mode</button>
+        <div id="version">v1.9</div>
     </div>
     <button id="returnButton">Return to Menu</button>
     <div id="error"></div>
@@ -96,15 +97,15 @@
         const CUBE_SIZE = 128;
         const DOT_SIZE = 0.3;
         const DOT_SPACING = CUBE_SIZE / (GRID_SIZE - 1);
-        const INITIAL_LINE_INTERVAL = 500;
-        const SLOW_LINE_INTERVAL = 3000;
-        const LINE_THRESHOLD = 50;
+        const INITIAL_LINE_INTERVAL = 200;
+        const SLOW_LINE_INTERVAL = 1000;
+        const LINE_THRESHOLD = 150;
         const CORNER_CUBE_SIZE = DOT_SIZE * 4;
         const ROTATION_SPEED = 0.0002;
         const LINE_WIDTH = 2;
-        const LINE_GROWTH_SPEED = DOT_SPACING / 120;
+        const LINE_GROWTH_SPEED = DOT_SPACING / 60;
         const MOVEMENT_SPEED = 0.8;
-        const MAX_LINES = 100;
+        const MAX_LINES = 300;
         const LINE_POOL_SIZE = MAX_LINES;
         const VR_SCALE_SENSITIVITY = 0.02;
         const VR_GRAB_DISTANCE = 0.5;
@@ -121,6 +122,7 @@
         let lineGenerationInterval = null;
         let animationFrameId = null;
         let isVRMode = false;
+        let isMobileMode = false;
         let controller1, controller2;
         let controllerGrip1, controllerGrip2;
         let cameraGroup;
@@ -160,17 +162,27 @@
 
         // UI Elements
         const menu = document.getElementById('menu');
-        const normalButton = document.getElementById('normalButton');
+        const pcButton = document.getElementById('pcButton');
+        const mobileButton = document.getElementById('mobileButton');
         const vrButton = document.getElementById('vrButton');
         const returnButton = document.getElementById('returnButton');
 
         // Event Listeners
-        normalButton.addEventListener('click', () => {
+        pcButton.addEventListener('click', () => {
             try {
-                startNormalMode();
+                startPCMode();
             } catch (error) {
-                showError(`Error starting normal mode: ${error.message}`);
-                console.error('Normal mode error:', error);
+                showError(`Error starting PC mode: ${error.message}`);
+                console.error('PC mode error:', error);
+            }
+        });
+
+        mobileButton.addEventListener('click', () => {
+            try {
+                startMobileMode();
+            } catch (error) {
+                showError(`Error starting mobile mode: ${error.message}`);
+                console.error('Mobile mode error:', error);
             }
         });
 
@@ -368,7 +380,7 @@
             instancedMesh.instanceMatrix.needsUpdate = true;
         }
 
-        function findNearestDot(position, direction, maxSteps) {
+        function findNearestDot(position, direction) {
             const startGridPos = {
                 x: Math.round((position.x / DOT_SPACING) + (GRID_SIZE-1)/2),
                 y: Math.round((position.y / DOT_SPACING) + (GRID_SIZE-1)/2),
@@ -382,59 +394,59 @@
                 return null;
             }
 
-            let steps = 0;
-            let currentPos = {...startGridPos};
-            let lastValidDot = null;
+            // Calculate target position (only one step in the given direction)
+            const targetPos = {
+                x: startGridPos.x + direction.x,
+                y: startGridPos.y + direction.y,
+                z: startGridPos.z + direction.z
+            };
 
-            while (steps < maxSteps) {
-                currentPos.x += direction.x;
-                currentPos.y += direction.y;
-                currentPos.z += direction.z;
-
-                // Check if we're still within bounds
-                if (currentPos.x <= 0 || currentPos.x >= GRID_SIZE-1 ||
-                    currentPos.y <= 0 || currentPos.y >= GRID_SIZE-1 ||
-                    currentPos.z <= 0 || currentPos.z >= GRID_SIZE-1) {
-                    return lastValidDot; // Return the last valid dot before hitting boundary
-                }
-
-                // Find a dot at this position
-                const targetDot = dots.find(dot => {
-                    const pos = dot.gridPosition;
-                    return pos.x === currentPos.x && 
-                           pos.y === currentPos.y && 
-                           pos.z === currentPos.z;
-                });
-
-                if (targetDot) {
-                    lastValidDot = targetDot;
-                }
-
-                steps++;
+            // Check if target position is within bounds
+            if (targetPos.x <= 0 || targetPos.x >= GRID_SIZE-1 ||
+                targetPos.y <= 0 || targetPos.y >= GRID_SIZE-1 ||
+                targetPos.z <= 0 || targetPos.z >= GRID_SIZE-1) {
+                return null;
             }
 
-            return lastValidDot;
+            // Find dot at target position
+            return dots.find(dot => {
+                const pos = dot.gridPosition;
+                return pos.x === targetPos.x && 
+                       pos.y === targetPos.y && 
+                       pos.z === targetPos.z;
+            });
         }
 
         function createRandomLine() {
             if (dots.length === 0) return;
 
             const startDot = dots[Math.floor(Math.random() * dots.length)];
+            // Only orthogonal directions (U/D/L/R/F/B)
             const directions = [
-                new THREE.Vector3(1, 0, 0),
-                new THREE.Vector3(-1, 0, 0),
-                new THREE.Vector3(0, 1, 0),
-                new THREE.Vector3(0, -1, 0),
-                new THREE.Vector3(0, 0, 1),
-                new THREE.Vector3(0, 0, -1)
+                new THREE.Vector3(1, 0, 0),   // Right
+                new THREE.Vector3(-1, 0, 0),  // Left
+                new THREE.Vector3(0, 1, 0),   // Up
+                new THREE.Vector3(0, -1, 0),  // Down
+                new THREE.Vector3(0, 0, 1),   // Forward
+                new THREE.Vector3(0, 0, -1)   // Backward
             ];
 
             const direction = directions[Math.floor(Math.random() * directions.length)];
             const startPoint = startDot.position.clone();
             
-            // Find target dot in chosen direction
-            const endDot = findNearestDot(startPoint, direction, GRID_SIZE);
+            // Find target dot in chosen direction (only one step)
+            const endDot = findNearestDot(startPoint, direction);
             if (!endDot) return;
+
+            // Check if this line already exists
+            const lineExists = lines.some(line => {
+                if (!line.userData) return false;
+                const start = line.userData.startPoint;
+                const end = line.userData.endPoint;
+                return (start.equals(startPoint) && end.equals(endDot.position)) ||
+                       (start.equals(endDot.position) && end.equals(startPoint));
+            });
+            if (lineExists) return;
 
             const targetLength = startPoint.distanceTo(endDot.position);
             
@@ -558,15 +570,20 @@
             cameraGroup = new THREE.Group();
             scene.add(cameraGroup);
 
-            // Set up camera with better initial position and parameters
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
             if (isVRMode) {
-                camera.position.set(0, 0, CUBE_SIZE * 0.75); // Position for VR
+                camera.position.set(0, 0, CUBE_SIZE * 0.75);
+            } else if (isMobileMode) {
+                camera.position.set(CUBE_SIZE * 0.75, CUBE_SIZE * 0.75, CUBE_SIZE * 0.75);
             } else {
-                camera.position.set(CUBE_SIZE * 0.5, CUBE_SIZE * 0.5, CUBE_SIZE * 0.75); // Position for PC
+                camera.position.set(CUBE_SIZE * 0.5, CUBE_SIZE * 0.5, CUBE_SIZE * 0.75);
             }
             camera.lookAt(0, 0, 0);
             cameraGroup.add(camera);
+
+            // Add touch detection meta tag
+            const viewport = document.querySelector("meta[name=viewport]");
+            viewport.content = "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no";
 
             renderer = new THREE.WebGLRenderer({ 
                 antialias: true,
@@ -574,7 +591,7 @@
                 powerPreference: "high-performance"
             });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             document.body.appendChild(renderer.domElement);
 
             mainCube = new THREE.Group();
@@ -582,10 +599,8 @@
             mainCube.add(createDots());
             scene.add(mainCube);
 
-            // Initialize line pool
             initializeLinePool();
 
-            // Start with fast line generation
             if (lineGenerationInterval) {
                 clearInterval(lineGenerationInterval);
             }
@@ -597,13 +612,11 @@
                 }
             }, INITIAL_LINE_INTERVAL);
 
-            renderer.domElement.addEventListener('click', () => {
-                renderer.domElement.requestPointerLock();
-            });
-
             window.addEventListener('resize', onWindowResize, false);
-            window.addEventListener('keydown', handleKeyDown);
-            window.addEventListener('keyup', handleKeyUp);
+            if (!isMobileMode) {
+                window.addEventListener('keydown', handleKeyDown);
+                window.addEventListener('keyup', handleKeyUp);
+            }
         }
 
         function onWindowResize() {
@@ -853,7 +866,45 @@
             }
         }
 
-        function startNormalMode() {
+        function startMobileMode() {
+            isMobileMode = true;
+            isVRMode = false;
+            init();
+            
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxDistance = CUBE_SIZE * 2;
+            controls.minDistance = 0.1;
+            controls.enablePan = false; // Disable panning for mobile
+            controls.rotateSpeed = 0.5;
+            controls.enableZoom = true;
+            controls.zoomSpeed = 1.0;
+            controls.touches = {
+                ONE: THREE.TOUCH.ROTATE,
+                TWO: THREE.TOUCH.DOLLY_PAN
+            };
+            
+            // Set initial position for better mobile view
+            camera.position.set(CUBE_SIZE * 0.75, CUBE_SIZE * 0.75, CUBE_SIZE * 0.75);
+            camera.lookAt(0, 0, 0);
+            controls.update();
+            
+            menu.style.display = 'none';
+            returnButton.style.display = 'block';
+            
+            function animate() {
+                animationFrameId = requestAnimationFrame(animate);
+                controls.update();
+                updateLines();
+                updateDotOpacity();
+                renderer.render(scene, camera);
+            }
+            animate();
+        }
+
+        function startPCMode() {
+            isMobileMode = false;
             isVRMode = false;
             init();
             
