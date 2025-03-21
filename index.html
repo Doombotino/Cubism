@@ -80,7 +80,7 @@
         <h2>3D Space Battle Map</h2>
         <button id="normalButton">Play Normal Mode</button>
         <button id="vrButton">Play VR Mode</button>
-        <div id="version">v1.0</div>
+        <div id="version">v1.4</div>
     </div>
     <button id="returnButton">Return to Menu</button>
     <div id="error"></div>
@@ -136,7 +136,9 @@
             grabPosition2: new THREE.Vector3(),
             initialScale: 1,
             initialDistance: 0,
-            initialGrabPoint: new THREE.Vector3()
+            initialGrabPoint: new THREE.Vector3(),
+            initialRotation: new THREE.Quaternion(),
+            initialCubeRotation: new THREE.Quaternion()
         };
 
         // Corner colors
@@ -158,9 +160,32 @@
         const returnButton = document.getElementById('returnButton');
 
         // Event Listeners
-        normalButton.addEventListener('click', () => startNormalMode());
-        vrButton.addEventListener('click', () => startVRMode());
-        returnButton.addEventListener('click', () => returnToMenu());
+        normalButton.addEventListener('click', () => {
+            try {
+                startNormalMode();
+            } catch (error) {
+                showError(`Error starting normal mode: ${error.message}`);
+                console.error('Normal mode error:', error);
+            }
+        });
+
+        vrButton.addEventListener('click', () => {
+            try {
+                startVRMode();
+            } catch (error) {
+                showError(`Error starting VR mode: ${error.message}`);
+                console.error('VR mode error:', error);
+            }
+        });
+
+        returnButton.addEventListener('click', () => {
+            try {
+                returnToMenu();
+            } catch (error) {
+                showError(`Error returning to menu: ${error.message}`);
+                console.error('Return to menu error:', error);
+            }
+        });
 
         function showError(message) {
             const errorDiv = document.getElementById('error');
@@ -433,8 +458,8 @@
             switch (event.code) {
                 case 'KeyW': moveForward = true; break;
                 case 'KeyS': moveBackward = true; break;
-                case 'KeyA': moveRight = true; break;
-                case 'KeyD': moveLeft = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyD': moveRight = true; break;
                 case 'Space': moveUp = true; break;
                 case 'ShiftLeft': moveDown = true; break;
             }
@@ -444,8 +469,8 @@
             switch (event.code) {
                 case 'KeyW': moveForward = false; break;
                 case 'KeyS': moveBackward = false; break;
-                case 'KeyA': moveRight = false; break;
-                case 'KeyD': moveLeft = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyD': moveRight = false; break;
                 case 'Space': moveUp = false; break;
                 case 'ShiftLeft': moveDown = false; break;
             }
@@ -458,18 +483,19 @@
                 const right = new THREE.Vector3();
                 right.crossVectors(camera.up, direction).normalize();
 
-                const speed = MOVEMENT_SPEED * 2; // Still doubled but base speed is lower
+                const speed = MOVEMENT_SPEED;
 
                 if (moveForward) camera.position.addScaledVector(direction, speed);
                 if (moveBackward) camera.position.addScaledVector(direction, -speed);
-                if (moveRight) camera.position.addScaledVector(right, speed);
-                if (moveLeft) camera.position.addScaledVector(right, -speed);
+                if (moveRight) camera.position.addScaledVector(right, -speed);
+                if (moveLeft) camera.position.addScaledVector(right, speed);
                 if (moveUp) camera.position.y += speed;
                 if (moveDown) camera.position.y -= speed;
 
-                // Update OrbitControls target based on movement
+                // Update OrbitControls target
                 if (controls) {
-                    controls.target.copy(camera.position).add(direction);
+                    const targetDistance = 1;
+                    controls.target.copy(camera.position).add(direction.multiplyScalar(targetDistance));
                 }
             }
         }
@@ -481,8 +507,13 @@
             cameraGroup = new THREE.Group();
             scene.add(cameraGroup);
 
+            // Set up camera with better initial position and parameters
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
-            camera.position.set(0, 0, CUBE_SIZE/2);
+            if (isVRMode) {
+                camera.position.set(0, 0, CUBE_SIZE * 0.75); // Position for VR
+            } else {
+                camera.position.set(CUBE_SIZE * 0.5, CUBE_SIZE * 0.5, CUBE_SIZE * 0.75); // Position for PC
+            }
             camera.lookAt(0, 0, 0);
             cameraGroup.add(camera);
 
@@ -524,6 +555,16 @@
             window.addEventListener('keyup', handleKeyUp);
         }
 
+        function onWindowResize() {
+            if (!camera || !renderer) return;
+            
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        }
+
         function setupVRControllers() {
             controller1 = renderer.xr.getController(0);
             controller2 = renderer.xr.getController(1);
@@ -554,7 +595,10 @@
         function onVRGrabStart(event) {
             const controller = event.target;
             const controllerPosition = new THREE.Vector3();
+            const controllerRotation = new THREE.Quaternion();
+            
             controller.getWorldPosition(controllerPosition);
+            controller.getWorldQuaternion(controllerRotation);
 
             // Check if controller is close enough to grab
             const cubePosition = new THREE.Vector3();
@@ -564,19 +608,23 @@
                 if (controller === controller1) {
                     vrState.isGrabbing1 = true;
                     vrState.grabPosition1.copy(controllerPosition);
+                    vrState.grabRotation1 = controllerRotation.clone();
                 } else {
                     vrState.isGrabbing2 = true;
                     vrState.grabPosition2.copy(controllerPosition);
+                    vrState.grabRotation2 = controllerRotation.clone();
                 }
 
                 // If both controllers are grabbing, store initial distance for scaling
                 if (vrState.isGrabbing1 && vrState.isGrabbing2) {
                     vrState.initialDistance = vrState.grabPosition1.distanceTo(vrState.grabPosition2);
                     vrState.initialScale = mainCube.scale.x;
+                    vrState.initialRotation = mainCube.quaternion.clone();
                 }
 
-                // Store initial grab point relative to cube
+                // Store initial grab point and rotation
                 vrState.initialGrabPoint.copy(cubePosition);
+                vrState.initialCubeRotation = mainCube.quaternion.clone();
             }
         }
 
@@ -592,12 +640,16 @@
         function updateVRInteraction() {
             const pos1 = new THREE.Vector3();
             const pos2 = new THREE.Vector3();
+            const rot1 = new THREE.Quaternion();
+            const rot2 = new THREE.Quaternion();
             
             if (vrState.isGrabbing1) {
                 controller1.getWorldPosition(pos1);
+                controller1.getWorldQuaternion(rot1);
             }
             if (vrState.isGrabbing2) {
                 controller2.getWorldPosition(pos2);
+                controller2.getWorldQuaternion(rot2);
             }
 
             // Handle cube movement and scaling
@@ -605,16 +657,29 @@
                 if (vrState.isGrabbing1 && vrState.isGrabbing2) {
                     // Two-handed interaction: Scaling and movement
                     const currentDistance = pos1.distanceTo(pos2);
-                    const scale = vrState.initialScale * (currentDistance / vrState.initialDistance);
-                    mainCube.scale.setScalar(Math.max(0.1, Math.min(scale, 5.0))); // Limit scale range
+                    const scaleFactor = currentDistance / vrState.initialDistance;
+                    const newScale = vrState.initialScale * scaleFactor;
+                    
+                    // Apply scale with limits
+                    mainCube.scale.setScalar(Math.max(0.1, Math.min(newScale, 5.0)));
 
-                    // Move cube to average position of controllers
+                    // Move cube to midpoint between controllers
                     const midPoint = pos1.clone().add(pos2).multiplyScalar(0.5);
                     mainCube.position.copy(midPoint);
+
+                    // Calculate and apply rotation based on controller orientation
+                    const rotationDiff = new THREE.Quaternion().multiplyQuaternions(rot2, rot1.invert());
+                    mainCube.quaternion.multiply(rotationDiff);
                 } else {
-                    // Single-handed interaction: Just movement
+                    // Single-handed interaction: Movement and rotation
                     const activePos = vrState.isGrabbing1 ? pos1 : pos2;
+                    const activeRot = vrState.isGrabbing1 ? rot1 : rot2;
+                    
+                    // Move cube to controller position
                     mainCube.position.copy(activePos);
+                    
+                    // Apply controller rotation to cube
+                    mainCube.quaternion.copy(activeRot);
                 }
             }
         }
@@ -624,16 +689,16 @@
             init();
             setupVRControllers();
             
-            // Set initial VR position further back
-            mainCube.position.z = -CUBE_SIZE;
-            mainCube.scale.setScalar(0.5); // Start smaller
+            // Set initial cube position instead of moving camera
+            mainCube.position.set(0, 0, -CUBE_SIZE * 0.75);
+            mainCube.scale.setScalar(1.0); // Start at normal scale
 
             document.body.appendChild(VRButton.createButton(renderer));
             renderer.xr.enabled = true;
             
             // VR-specific optimizations
-            renderer.xr.setFramebufferScaleFactor(0.8); // Reduce render resolution
-            renderer.setPixelRatio(1); // Force 1:1 pixel ratio in VR
+            renderer.xr.setFramebufferScaleFactor(0.8);
+            renderer.setPixelRatio(1);
             
             menu.style.display = 'none';
             returnButton.style.display = 'block';
@@ -706,6 +771,33 @@
                     }
                 });
             }
+        }
+
+        function startNormalMode() {
+            isVRMode = false;
+            init();
+            
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxDistance = CUBE_SIZE * 2; // Allow moving far out
+            controls.minDistance = 0.1; // Allow moving very close
+            controls.enablePan = true; // Enable panning
+            controls.panSpeed = 1.0;
+            controls.rotateSpeed = 0.5; // Slower rotation for better control
+            
+            menu.style.display = 'none';
+            returnButton.style.display = 'block';
+            
+            // Start animation
+            function animate() {
+                animationFrameId = requestAnimationFrame(animate);
+                controls.update();
+                updateCamera();
+                updateLines();
+                renderer.render(scene, camera);
+            }
+            animate();
         }
     </script>
 </body>
