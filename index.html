@@ -80,7 +80,7 @@
         <h2>3D Space Battle Map</h2>
         <button id="normalButton">Play Normal Mode</button>
         <button id="vrButton">Play VR Mode</button>
-        <div id="version">v1.5</div>
+        <div id="version">v1.6</div>
     </div>
     <button id="returnButton">Return to Menu</button>
     <div id="error"></div>
@@ -283,14 +283,15 @@
             const material = new THREE.MeshStandardMaterial({
                 color: 0x808080,
                 emissive: 0x404040,
-                emissiveIntensity: 0.3,
+                emissiveIntensity: 0.5,
                 transparent: true,
                 opacity: 0.2,
                 side: THREE.DoubleSide,
-                flatShading: isVRMode // Use flat shading in VR for better performance
+                flatShading: isVRMode
             });
 
             const instancedMesh = new THREE.InstancedMesh(geometry, material, GRID_SIZE * GRID_SIZE * GRID_SIZE);
+            instancedMesh.userData.dots = [];
             let instanceCount = 0;
             const matrix = new THREE.Matrix4();
 
@@ -309,11 +310,14 @@
                         matrix.setPosition(posX, posY, posZ);
                         instancedMesh.setMatrixAt(instanceCount, matrix);
                         
-                        // Store position data for line generation
-                        dots.push({
+                        // Store position data
+                        const dotData = {
                             position: new THREE.Vector3(posX, posY, posZ),
-                            gridPosition: { x, y, z }
-                        });
+                            gridPosition: { x, y, z },
+                            instanceId: instanceCount
+                        };
+                        dots.push(dotData);
+                        instancedMesh.userData.dots.push(dotData);
                         
                         instanceCount++;
                     }
@@ -323,6 +327,45 @@
             instancedMesh.count = instanceCount;
             dotGroup.add(instancedMesh);
             return dotGroup;
+        }
+
+        function updateDotOpacity() {
+            if (!camera || !mainCube) return;
+
+            const instancedMesh = mainCube.children.find(child => child.isInstancedMesh);
+            if (!instancedMesh || !instancedMesh.userData.dots) return;
+
+            const cameraPosition = new THREE.Vector3();
+            camera.getWorldPosition(cameraPosition);
+            const tempMatrix = new THREE.Matrix4();
+            const tempPosition = new THREE.Vector3();
+            const opacityMatrix = new THREE.Matrix4();
+
+            instancedMesh.userData.dots.forEach((dot, index) => {
+                // Get world position of dot
+                instancedMesh.getMatrixAt(dot.instanceId, tempMatrix);
+                tempPosition.setFromMatrixPosition(tempMatrix);
+                const worldPosition = tempPosition.clone().applyMatrix4(mainCube.matrixWorld);
+
+                // Calculate distance to camera
+                const distance = cameraPosition.distanceTo(worldPosition);
+                const maxDistance = CUBE_SIZE * 0.5;
+                const minOpacity = 0.2;
+                const maxOpacity = 0.8;
+
+                // Calculate opacity based on distance
+                let opacity = minOpacity;
+                if (distance < maxDistance) {
+                    opacity = maxOpacity - (distance / maxDistance) * (maxOpacity - minOpacity);
+                }
+
+                // Update the opacity in the material
+                instancedMesh.getMatrixAt(dot.instanceId, opacityMatrix);
+                opacityMatrix.elements[15] = opacity; // Use w component for opacity
+                instancedMesh.setMatrixAt(dot.instanceId, opacityMatrix);
+            });
+
+            instancedMesh.instanceMatrix.needsUpdate = true;
         }
 
         function findNearestDot(position, direction, maxSteps) {
@@ -704,12 +747,12 @@
             const cameraDirection = new THREE.Vector3();
             camera.getWorldDirection(cameraDirection);
 
-            if (vrMovementActive.left || vrMovementActive.right) {
-                // Move in the direction the camera is facing
-                cameraGroup.position.addScaledVector(
-                    cameraDirection,
-                    VR_MOVEMENT_SPEED * (vrMovementActive.left && vrMovementActive.right ? 2 : 1)
-                );
+            // Right grip moves forward, left grip moves backward
+            if (vrMovementActive.right) {
+                cameraGroup.position.addScaledVector(cameraDirection, VR_MOVEMENT_SPEED);
+            }
+            if (vrMovementActive.left) {
+                cameraGroup.position.addScaledVector(cameraDirection, -VR_MOVEMENT_SPEED);
             }
         }
 
@@ -746,9 +789,10 @@
                 // Update VR interactions and movement
                 updateVRInteraction();
                 updateVRMovement();
+                updateDotOpacity();
 
                 // Optimize line updates
-                if (Math.random() < 0.3) { // Reduce update frequency further
+                if (Math.random() < 0.3) {
                     updateLines();
                 }
 
@@ -816,21 +860,21 @@
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.05;
-            controls.maxDistance = CUBE_SIZE * 2; // Allow moving far out
-            controls.minDistance = 0.1; // Allow moving very close
-            controls.enablePan = true; // Enable panning
+            controls.maxDistance = CUBE_SIZE * 2;
+            controls.minDistance = 0.1;
+            controls.enablePan = true;
             controls.panSpeed = 1.0;
-            controls.rotateSpeed = 0.5; // Slower rotation for better control
+            controls.rotateSpeed = 0.5;
             
             menu.style.display = 'none';
             returnButton.style.display = 'block';
             
-            // Start animation
             function animate() {
                 animationFrameId = requestAnimationFrame(animate);
                 controls.update();
                 updateCamera();
                 updateLines();
+                updateDotOpacity();
                 renderer.render(scene, camera);
             }
             animate();
