@@ -80,7 +80,7 @@
         <h2>3D Space Battle Map</h2>
         <button id="normalButton">Play Normal Mode</button>
         <button id="vrButton">Play VR Mode</button>
-        <div id="version">v1.4</div>
+        <div id="version">v1.5</div>
     </div>
     <button id="returnButton">Return to Menu</button>
     <div id="error"></div>
@@ -101,13 +101,14 @@
         const LINE_THRESHOLD = 50;
         const CORNER_CUBE_SIZE = DOT_SIZE * 4;
         const ROTATION_SPEED = 0.0002;
-        const LINE_WIDTH = 1;
+        const LINE_WIDTH = 2;
         const LINE_GROWTH_SPEED = DOT_SPACING / 120;
         const MOVEMENT_SPEED = 0.8;
         const MAX_LINES = 100;
         const LINE_POOL_SIZE = MAX_LINES;
-        const VR_SCALE_SENSITIVITY = 0.02; // How fast the cube scales with controller movement
-        const VR_GRAB_DISTANCE = 0.5; // Distance to grab the cube
+        const VR_SCALE_SENSITIVITY = 0.02;
+        const VR_GRAB_DISTANCE = 0.5;
+        const VR_MOVEMENT_SPEED = 2.0;
 
         // Game state
         let camera, scene, renderer;
@@ -139,6 +140,10 @@
             initialGrabPoint: new THREE.Vector3(),
             initialRotation: new THREE.Quaternion(),
             initialCubeRotation: new THREE.Quaternion()
+        };
+        let vrMovementActive = {
+            left: false,
+            right: false
         };
 
         // Corner colors
@@ -233,7 +238,6 @@
         }
 
         function initializeLinePool() {
-            // Create a pool of reusable line objects
             const positions = new Float32Array(6);
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -241,13 +245,16 @@
             for (let i = 0; i < LINE_POOL_SIZE; i++) {
                 const material = new THREE.LineBasicMaterial({
                     transparent: true,
-                    opacity: 0.3,
+                    opacity: 0.6,
                     linewidth: LINE_WIDTH,
                     side: THREE.DoubleSide,
-                    depthTest: false
+                    depthTest: true,
+                    depthWrite: true,
+                    blending: THREE.AdditiveBlending
                 });
 
                 const line = new THREE.Line(geometry.clone(), material);
+                line.frustumCulled = false;
                 line.visible = false;
                 mainCube.add(line);
                 linePool.push(line);
@@ -421,6 +428,7 @@
         }
 
         function updateLines() {
+            const time = Date.now() * 0.001;
             lines.forEach(line => {
                 if (!line.visible || !line.userData) return;
 
@@ -449,8 +457,8 @@
                     line.geometry.attributes.position.needsUpdate = true;
                 }
 
-                // Subtle pulsing effect for all lines
-                line.material.opacity = 0.3 + Math.sin(Date.now() * 0.001) * 0.1;
+                // Smoother pulsing effect
+                line.material.opacity = 0.6 + Math.sin(time + line.userData.startPoint.x) * 0.2;
             });
         }
 
@@ -587,6 +595,12 @@
             controller2.addEventListener('selectstart', onVRGrabStart);
             controller2.addEventListener('selectend', onVRGrabEnd);
 
+            // Add grip button listeners for movement
+            controller1.addEventListener('squeezestart', () => { vrMovementActive.left = true; });
+            controller1.addEventListener('squeezeend', () => { vrMovementActive.left = false; });
+            controller2.addEventListener('squeezestart', () => { vrMovementActive.right = true; });
+            controller2.addEventListener('squeezeend', () => { vrMovementActive.right = false; });
+
             // Add raycasters for better grab detection
             controller1.userData.raycaster = new THREE.Raycaster();
             controller2.userData.raycaster = new THREE.Raycaster();
@@ -684,14 +698,29 @@
             }
         }
 
+        function updateVRMovement() {
+            if (!isVRMode) return;
+
+            const cameraDirection = new THREE.Vector3();
+            camera.getWorldDirection(cameraDirection);
+
+            if (vrMovementActive.left || vrMovementActive.right) {
+                // Move in the direction the camera is facing
+                cameraGroup.position.addScaledVector(
+                    cameraDirection,
+                    VR_MOVEMENT_SPEED * (vrMovementActive.left && vrMovementActive.right ? 2 : 1)
+                );
+            }
+        }
+
         function startVRMode() {
             isVRMode = true;
             init();
             setupVRControllers();
             
-            // Set initial cube position instead of moving camera
+            // Set initial cube position
             mainCube.position.set(0, 0, -CUBE_SIZE * 0.75);
-            mainCube.scale.setScalar(1.0); // Start at normal scale
+            mainCube.scale.setScalar(1.0);
 
             document.body.appendChild(VRButton.createButton(renderer));
             renderer.xr.enabled = true;
@@ -699,6 +728,12 @@
             // VR-specific optimizations
             renderer.xr.setFramebufferScaleFactor(0.8);
             renderer.setPixelRatio(1);
+            renderer.xr.setReferenceSpaceType('local-floor'); // Better VR space reference
+            
+            // Additional VR optimizations
+            renderer.physicallyCorrectLights = false;
+            renderer.toneMapping = THREE.NoToneMapping;
+            renderer.outputEncoding = THREE.LinearEncoding;
             
             menu.style.display = 'none';
             returnButton.style.display = 'block';
@@ -708,11 +743,12 @@
 
         function animateVR() {
             renderer.setAnimationLoop(() => {
-                // Update VR interactions
+                // Update VR interactions and movement
                 updateVRInteraction();
+                updateVRMovement();
 
-                // Update and animate lines with lower frequency in VR
-                if (Math.random() < 0.5) { // Only update half the frames
+                // Optimize line updates
+                if (Math.random() < 0.3) { // Reduce update frequency further
                     updateLines();
                 }
 
