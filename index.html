@@ -707,8 +707,7 @@
                 } else {
                     vrState.isGrabbing2 = true;
                     vrState.grabPosition2.copy(controllerPosition);
-                    // Store initial right controller rotation when starting to grip
-                    vrState.rightControllerInitialRotation.copy(controllerRotation);
+                    // Only update the last rotation when starting to grip
                     vrState.lastRightControllerRotation.copy(controllerRotation);
                 }
 
@@ -717,9 +716,6 @@
                     vrState.initialDistance = vrState.grabPosition1.distanceTo(vrState.grabPosition2);
                     vrState.initialScale = mainCube.scale.x;
                 }
-
-                // Store initial grab point
-                vrState.initialGrabPoint.copy(cubePosition);
             }
         }
 
@@ -802,6 +798,10 @@
                 const rotationDiff = new THREE.Quaternion();
                 rotationDiff.multiplyQuaternions(currentRotation, vrState.lastRightControllerRotation.invert());
 
+                // Invert the up/down rotation by creating a new quaternion with negated x and z components
+                rotationDiff.x *= -1;
+                rotationDiff.z *= -1;
+
                 // Apply the rotation to the cube
                 mainCube.quaternion.multiplyQuaternions(rotationDiff, mainCube.quaternion);
 
@@ -835,9 +835,15 @@
             init();
             setupVRControllers();
             
-            // Set initial cube position
-            mainCube.position.set(0, 0, -CUBE_SIZE * 0.75);
-            mainCube.scale.setScalar(1.0);
+            // Keep the cube at its current position and rotation if it exists
+            if (!mainCube) {
+                mainCube = new THREE.Group();
+                mainCube.position.set(0, 0, -CUBE_SIZE * 0.75);
+                mainCube.scale.setScalar(1.0);
+                mainCube.add(createCornerCubes());
+                mainCube.add(createDots());
+                scene.add(mainCube);
+            }
 
             // Set auto-rotation based on checkbox
             autoRotate = autoRotateCheckbox.checked;
