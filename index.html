@@ -144,11 +144,9 @@
             grabPosition2: new THREE.Vector3(),
             initialScale: 1,
             initialDistance: 0,
-            initialGrabPoint: new THREE.Vector3(),
-            initialRotation: new THREE.Quaternion(),
-            initialCubeRotation: new THREE.Quaternion(),
-            rightControllerInitialRotation: new THREE.Quaternion(),
-            lastRightControllerRotation: new THREE.Quaternion()
+            lastPosition1: new THREE.Vector3(),
+            lastPosition2: new THREE.Vector3(),
+            initialGrabVector: new THREE.Vector3()
         };
         let vrMovementActive = {
             left: false,
@@ -691,10 +689,7 @@
         function onVRGrabStart(event) {
             const controller = event.target;
             const controllerPosition = new THREE.Vector3();
-            const controllerRotation = new THREE.Quaternion();
-            
             controller.getWorldPosition(controllerPosition);
-            controller.getWorldQuaternion(controllerRotation);
 
             // Check if controller is close enough to grab
             const cubePosition = new THREE.Vector3();
@@ -704,14 +699,16 @@
                 if (controller === controller1) {
                     vrState.isGrabbing1 = true;
                     vrState.grabPosition1.copy(controllerPosition);
+                    vrState.lastPosition1.copy(controllerPosition);
                 } else {
                     vrState.isGrabbing2 = true;
                     vrState.grabPosition2.copy(controllerPosition);
-                    vrState.lastRightControllerRotation.copy(controllerRotation);
+                    vrState.lastPosition2.copy(controllerPosition);
                 }
 
-                // Store initial distance only if both controllers are grabbing
+                // If both controllers are grabbing, store the initial grab vector
                 if (vrState.isGrabbing1 && vrState.isGrabbing2) {
+                    vrState.initialGrabVector.copy(vrState.grabPosition2).sub(vrState.grabPosition1).normalize();
                     vrState.initialDistance = vrState.grabPosition1.distanceTo(vrState.grabPosition2);
                     vrState.initialScale = mainCube.scale.x;
                 }
@@ -730,33 +727,50 @@
         function updateVRInteraction() {
             const pos1 = new THREE.Vector3();
             const pos2 = new THREE.Vector3();
-            const rot1 = new THREE.Quaternion();
-            const rot2 = new THREE.Quaternion();
             
             if (vrState.isGrabbing1) {
                 controller1.getWorldPosition(pos1);
-                controller1.getWorldQuaternion(rot1);
             }
             if (vrState.isGrabbing2) {
                 controller2.getWorldPosition(pos2);
-                controller2.getWorldQuaternion(rot2);
             }
 
-            // Handle cube movement and scaling
-            if (vrState.isGrabbing1 || vrState.isGrabbing2) {
-                if (vrState.isGrabbing1 && vrState.isGrabbing2) {
-                    // Two-handed interaction: Scaling and movement
-                    const currentDistance = pos1.distanceTo(pos2);
-                    const scaleFactor = currentDistance / vrState.initialDistance;
-                    const newScale = vrState.initialScale * scaleFactor;
+            // Handle cube movement and scaling with both controllers
+            if (vrState.isGrabbing1 && vrState.isGrabbing2) {
+                // Calculate current controller vector and its change from last frame
+                const currentVector = pos2.clone().sub(pos1).normalize();
+                const lastVector = vrState.lastPosition2.clone().sub(vrState.lastPosition1).normalize();
+                
+                // Calculate rotation from the change in controller positions
+                const rotationAxis = new THREE.Vector3().crossVectors(lastVector, currentVector);
+                const angle = lastVector.angleTo(currentVector);
+                
+                if (angle > 0.001) { // Only rotate if there's significant movement
+                    const rotationQuat = new THREE.Quaternion().setFromAxisAngle(rotationAxis, angle);
                     
-                    // Apply scale with limits
-                    mainCube.scale.setScalar(Math.max(0.1, Math.min(newScale, 5.0)));
-
-                    // Move cube to midpoint between controllers
-                    const midPoint = pos1.clone().add(pos2).multiplyScalar(0.5);
-                    mainCube.position.copy(midPoint);
+                    // Store current cube position
+                    const cubePosition = mainCube.position.clone();
+                    
+                    // Apply rotation
+                    mainCube.quaternion.multiplyQuaternions(rotationQuat, mainCube.quaternion);
+                    
+                    // Restore position
+                    mainCube.position.copy(cubePosition);
                 }
+
+                // Update scaling
+                const currentDistance = pos1.distanceTo(pos2);
+                const scaleFactor = currentDistance / vrState.initialDistance;
+                const newScale = vrState.initialScale * scaleFactor;
+                mainCube.scale.setScalar(Math.max(0.1, Math.min(newScale, 5.0)));
+
+                // Move cube to midpoint between controllers
+                const midPoint = pos1.clone().add(pos2).multiplyScalar(0.5);
+                mainCube.position.copy(midPoint);
+
+                // Update last positions for next frame
+                vrState.lastPosition1.copy(pos1);
+                vrState.lastPosition2.copy(pos2);
             }
         }
 
@@ -772,27 +786,6 @@
             }
             if (vrMovementActive.left) {
                 cameraGroup.position.addScaledVector(cameraDirection, -VR_MOVEMENT_SPEED);
-            }
-
-            // Both grips for rotation based on right controller wrist movement
-            if (vrMovementActive.left && vrMovementActive.right) {
-                const currentRotation = new THREE.Quaternion();
-                controller2.getWorldQuaternion(currentRotation);
-
-                // Calculate rotation difference from last frame
-                const rotationDiff = new THREE.Quaternion();
-                rotationDiff.multiplyQuaternions(currentRotation, vrState.lastRightControllerRotation.invert());
-
-                // Invert only the x component to fix up/down direction
-                rotationDiff.x *= -1;
-
-                // Apply the rotation to the cube while maintaining its current position
-                const cubePosition = mainCube.position.clone();
-                mainCube.quaternion.multiplyQuaternions(rotationDiff, mainCube.quaternion);
-                mainCube.position.copy(cubePosition);
-
-                // Update last rotation
-                vrState.lastRightControllerRotation.copy(currentRotation);
             }
         }
 
@@ -821,7 +814,7 @@
             init();
             setupVRControllers();
             
-            // Keep the cube at its current position and rotation if it exists
+            // Keep the cube exactly where it is if it exists
             if (!mainCube) {
                 mainCube = new THREE.Group();
                 mainCube.position.set(0, 0, -CUBE_SIZE * 0.75);
