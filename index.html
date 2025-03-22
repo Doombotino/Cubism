@@ -737,21 +737,26 @@
 
             // Handle cube movement and scaling with both controllers
             if (vrState.isGrabbing1 && vrState.isGrabbing2) {
-                // Calculate current controller vector and its change from last frame
-                const currentVector = pos2.clone().sub(pos1).normalize();
-                const lastVector = vrState.lastPosition2.clone().sub(vrState.lastPosition1).normalize();
+                // Calculate vectors between controllers
+                const currentVector = pos2.clone().sub(pos1);
+                const lastVector = vrState.lastPosition2.clone().sub(vrState.lastPosition1);
                 
-                // Calculate rotation from the change in controller positions
+                // Get the rotation axis and angle between the vectors
                 const rotationAxis = new THREE.Vector3().crossVectors(lastVector, currentVector);
-                const angle = lastVector.angleTo(currentVector);
+                rotationAxis.normalize();
                 
-                if (angle > 0.001) { // Only rotate if there's significant movement
-                    const rotationQuat = new THREE.Quaternion().setFromAxisAngle(rotationAxis, angle);
+                // Calculate the angle between the vectors
+                const angle = Math.acos(lastVector.normalize().dot(currentVector.normalize()));
+                
+                if (!isNaN(angle) && angle > 0.001) {
+                    // Create rotation quaternion
+                    const rotationQuat = new THREE.Quaternion();
+                    rotationQuat.setFromAxisAngle(rotationAxis, angle * 2); // Multiply by 2 for more responsive rotation
                     
                     // Store current cube position
                     const cubePosition = mainCube.position.clone();
                     
-                    // Apply rotation
+                    // Apply rotation around the cube's center
                     mainCube.quaternion.multiplyQuaternions(rotationQuat, mainCube.quaternion);
                     
                     // Restore position
