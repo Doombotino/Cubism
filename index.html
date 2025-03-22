@@ -106,7 +106,7 @@
         const LINE_THRESHOLD = 150;
         const CORNER_CUBE_SIZE = DOT_SIZE * 4;
         const ROTATION_SPEED = 0.0002;
-        const VR_ROTATION_SPEED = 5.0; // Much higher rotation speed for VR
+        const VR_ROTATION_SPEED = 0.5; // Reduced from 5.0 to 0.5
         const LINE_WIDTH = 2;
         const LINE_GROWTH_SPEED = DOT_SPACING / 60;
         const MOVEMENT_SPEED = 0.8;
@@ -792,21 +792,44 @@
                 cameraGroup.position.addScaledVector(cameraDirection, -VR_MOVEMENT_SPEED);
             }
 
-            // Both grips for intuitive rotation
+            // Both grips for rotation based on controller movement
             if (vrMovementActive.left && vrMovementActive.right) {
                 const pos1 = new THREE.Vector3();
                 const pos2 = new THREE.Vector3();
+                const prevPos1 = new THREE.Vector3();
+                const prevPos2 = new THREE.Vector3();
+                
+                // Get current positions
                 controller1.getWorldPosition(pos1);
                 controller2.getWorldPosition(pos2);
-
-                // Calculate the direction vector between controllers
-                const controllerDirection = pos2.clone().sub(pos1).normalize();
                 
-                // Get the rotation axis by crossing controller direction with camera direction
-                const rotationAxis = new THREE.Vector3().crossVectors(controllerDirection, cameraDirection).normalize();
+                // Get previous positions from state
+                prevPos1.copy(vrState.grabPosition1);
+                prevPos2.copy(vrState.grabPosition2);
                 
-                // Apply rotation based on controller movement
-                mainCube.rotateOnAxis(rotationAxis, VR_ROTATION_SPEED * 0.01);
+                // Calculate movement vectors
+                const movement1 = pos1.clone().sub(prevPos1);
+                const movement2 = pos2.clone().sub(prevPos2);
+                
+                // Only rotate if there's actual movement
+                if (movement1.lengthSq() > 0.0001 || movement2.lengthSq() > 0.0001) {
+                    // Calculate the current and previous controller directions
+                    const prevDirection = prevPos2.clone().sub(prevPos1).normalize();
+                    const currentDirection = pos2.clone().sub(pos1).normalize();
+                    
+                    // Calculate rotation axis and angle
+                    const rotationAxis = new THREE.Vector3().crossVectors(prevDirection, currentDirection).normalize();
+                    const angle = prevDirection.angleTo(currentDirection) * VR_ROTATION_SPEED;
+                    
+                    // Apply rotation if the angle is significant
+                    if (angle > 0.001) {
+                        mainCube.rotateOnAxis(rotationAxis, angle);
+                    }
+                }
+                
+                // Update previous positions
+                vrState.grabPosition1.copy(pos1);
+                vrState.grabPosition2.copy(pos2);
             }
         }
 
