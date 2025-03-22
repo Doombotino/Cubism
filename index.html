@@ -707,11 +707,10 @@
                 } else {
                     vrState.isGrabbing2 = true;
                     vrState.grabPosition2.copy(controllerPosition);
-                    // Only update the last rotation when starting to grip
                     vrState.lastRightControllerRotation.copy(controllerRotation);
                 }
 
-                // If both controllers are grabbing, store initial distance for scaling
+                // Store initial distance only if both controllers are grabbing
                 if (vrState.isGrabbing1 && vrState.isGrabbing2) {
                     vrState.initialDistance = vrState.grabPosition1.distanceTo(vrState.grabPosition2);
                     vrState.initialScale = mainCube.scale.x;
@@ -757,20 +756,6 @@
                     // Move cube to midpoint between controllers
                     const midPoint = pos1.clone().add(pos2).multiplyScalar(0.5);
                     mainCube.position.copy(midPoint);
-
-                    // Calculate and apply rotation based on controller orientation
-                    const rotationDiff = new THREE.Quaternion().multiplyQuaternions(rot2, rot1.invert());
-                    mainCube.quaternion.multiply(rotationDiff);
-                } else {
-                    // Single-handed interaction: Movement and rotation
-                    const activePos = vrState.isGrabbing1 ? pos1 : pos2;
-                    const activeRot = vrState.isGrabbing1 ? rot1 : rot2;
-                    
-                    // Move cube to controller position
-                    mainCube.position.copy(activePos);
-                    
-                    // Apply controller rotation to cube
-                    mainCube.quaternion.copy(activeRot);
                 }
             }
         }
