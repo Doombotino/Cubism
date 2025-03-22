@@ -798,12 +798,13 @@
                 const rotationDiff = new THREE.Quaternion();
                 rotationDiff.multiplyQuaternions(currentRotation, vrState.lastRightControllerRotation.invert());
 
-                // Invert the up/down rotation by creating a new quaternion with negated x and z components
+                // Invert only the x component to fix up/down direction
                 rotationDiff.x *= -1;
-                rotationDiff.z *= -1;
 
-                // Apply the rotation to the cube
+                // Apply the rotation to the cube while maintaining its current position
+                const cubePosition = mainCube.position.clone();
                 mainCube.quaternion.multiplyQuaternions(rotationDiff, mainCube.quaternion);
+                mainCube.position.copy(cubePosition);
 
                 // Update last rotation
                 vrState.lastRightControllerRotation.copy(currentRotation);
