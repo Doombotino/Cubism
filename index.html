@@ -81,7 +81,11 @@
         <button id="pcButton">PC Mode</button>
         <button id="mobileButton">Mobile Mode</button>
         <button id="vrButton">VR Mode</button>
-        <div id="version">v1.9</div>
+        <div id="version">v2.1</div>
+        <div id="autoRotateDiv">
+            <input type="checkbox" id="autoRotate">
+            <label for="autoRotate">Start with Auto-Rotation</label>
+        </div>
     </div>
     <button id="returnButton">Return to Menu</button>
     <div id="error"></div>
@@ -166,6 +170,7 @@
         const mobileButton = document.getElementById('mobileButton');
         const vrButton = document.getElementById('vrButton');
         const returnButton = document.getElementById('returnButton');
+        const autoRotateCheckbox = document.getElementById('autoRotate');
 
         // Event Listeners
         pcButton.addEventListener('click', () => {
@@ -289,7 +294,6 @@
 
         function createDots() {
             const dotGroup = new THREE.Group();
-            // Reduce geometry complexity for VR
             const segments = isVRMode ? 4 : 6;
             const geometry = new THREE.SphereGeometry(DOT_SIZE, segments, segments);
             const material = new THREE.MeshStandardMaterial({
@@ -307,14 +311,10 @@
             let instanceCount = 0;
             const matrix = new THREE.Matrix4();
 
+            // Create all dots including corners
             for (let x = 0; x < GRID_SIZE; x++) {
                 for (let y = 0; y < GRID_SIZE; y++) {
                     for (let z = 0; z < GRID_SIZE; z++) {
-                        // Skip edges and corners
-                        if ((x === 0 || x === GRID_SIZE-1) && 
-                            (y === 0 || y === GRID_SIZE-1) && 
-                            (z === 0 || z === GRID_SIZE-1)) continue;
-
                         const posX = (x - (GRID_SIZE-1)/2) * DOT_SPACING;
                         const posY = (y - (GRID_SIZE-1)/2) * DOT_SPACING;
                         const posZ = (z - (GRID_SIZE-1)/2) * DOT_SPACING;
@@ -326,7 +326,10 @@
                         const dotData = {
                             position: new THREE.Vector3(posX, posY, posZ),
                             gridPosition: { x, y, z },
-                            instanceId: instanceCount
+                            instanceId: instanceCount,
+                            isCorner: (x === 0 || x === GRID_SIZE-1) && 
+                                    (y === 0 || y === GRID_SIZE-1) && 
+                                    (z === 0 || z === GRID_SIZE-1)
                         };
                         dots.push(dotData);
                         instancedMesh.userData.dots.push(dotData);
@@ -387,13 +390,6 @@
                 z: Math.round((position.z / DOT_SPACING) + (GRID_SIZE-1)/2)
             };
 
-            // Don't start from edge positions
-            if (startGridPos.x <= 0 || startGridPos.x >= GRID_SIZE-1 ||
-                startGridPos.y <= 0 || startGridPos.y >= GRID_SIZE-1 ||
-                startGridPos.z <= 0 || startGridPos.z >= GRID_SIZE-1) {
-                return null;
-            }
-
             // Calculate target position (only one step in the given direction)
             const targetPos = {
                 x: startGridPos.x + direction.x,
@@ -402,9 +398,9 @@
             };
 
             // Check if target position is within bounds
-            if (targetPos.x <= 0 || targetPos.x >= GRID_SIZE-1 ||
-                targetPos.y <= 0 || targetPos.y >= GRID_SIZE-1 ||
-                targetPos.z <= 0 || targetPos.z >= GRID_SIZE-1) {
+            if (targetPos.x < 0 || targetPos.x >= GRID_SIZE ||
+                targetPos.y < 0 || targetPos.y >= GRID_SIZE ||
+                targetPos.z < 0 || targetPos.z >= GRID_SIZE) {
                 return null;
             }
 
@@ -420,7 +416,21 @@
         function createRandomLine() {
             if (dots.length === 0) return;
 
-            const startDot = dots[Math.floor(Math.random() * dots.length)];
+            // Start with corner dots if there are no lines yet
+            let startDot;
+            if (lines.length === 0) {
+                // Filter corner dots
+                const cornerDots = dots.filter(dot => dot.isCorner);
+                startDot = cornerDots[Math.floor(Math.random() * cornerDots.length)];
+            } else {
+                // After initial corner connections, give higher priority to corner dots
+                const cornerDots = dots.filter(dot => dot.isCorner);
+                const shouldUseCorner = Math.random() < 0.3; // 30% chance to start from a corner
+                startDot = shouldUseCorner ? 
+                    cornerDots[Math.floor(Math.random() * cornerDots.length)] :
+                    dots[Math.floor(Math.random() * dots.length)];
+            }
+
             // Only orthogonal directions (U/D/L/R/F/B)
             const directions = [
                 new THREE.Vector3(1, 0, 0),   // Right
@@ -454,9 +464,22 @@
             const line = getLineFromPool();
             if (!line) return;
 
-            // Choose a random corner color
-            const randomCornerColor = CORNER_COLORS[Math.floor(Math.random() * CORNER_COLORS.length)].color;
-            line.material.color.setHex(randomCornerColor);
+            // If starting from a corner, use that corner's color
+            let lineColor;
+            if (startDot.isCorner || endDot.isCorner) {
+                // Find the matching corner color
+                const cornerColor = CORNER_COLORS.find(cc => {
+                    const [x, y, z] = cc.position;
+                    return (startDot.isCorner && startDot.gridPosition.x === x && 
+                           startDot.gridPosition.y === y && startDot.gridPosition.z === z) ||
+                           (endDot.isCorner && endDot.gridPosition.x === x && 
+                           endDot.gridPosition.y === y && endDot.gridPosition.z === z);
+                });
+                lineColor = cornerColor ? cornerColor.color : CORNER_COLORS[Math.floor(Math.random() * CORNER_COLORS.length)].color;
+            } else {
+                lineColor = CORNER_COLORS[Math.floor(Math.random() * CORNER_COLORS.length)].color;
+            }
+            line.material.color.setHex(lineColor);
 
             // Update line geometry
             const positions = line.geometry.attributes.position.array;
@@ -767,6 +790,31 @@
             if (vrMovementActive.left) {
                 cameraGroup.position.addScaledVector(cameraDirection, -VR_MOVEMENT_SPEED);
             }
+
+            // Both grips for rotation around view direction
+            if (vrMovementActive.left && vrMovementActive.right) {
+                mainCube.rotateOnAxis(cameraDirection.normalize(), ROTATION_SPEED * 2);
+            }
+        }
+
+        // Add auto-rotation state
+        let autoRotate = false;
+        const AUTO_ROTATION_SPEED = 0.001;
+        let rotationPhase = 0;
+
+        function updateAutoRotation() {
+            if (!autoRotate || !mainCube) return;
+            
+            rotationPhase += AUTO_ROTATION_SPEED;
+            
+            // Complex rotation pattern
+            const xRotation = Math.sin(rotationPhase) * AUTO_ROTATION_SPEED;
+            const yRotation = Math.cos(rotationPhase * 1.3) * AUTO_ROTATION_SPEED;
+            const zRotation = Math.sin(rotationPhase * 0.7) * AUTO_ROTATION_SPEED;
+            
+            mainCube.rotation.x += xRotation;
+            mainCube.rotation.y += yRotation;
+            mainCube.rotation.z += zRotation;
         }
 
         function startVRMode() {
@@ -778,15 +826,17 @@
             mainCube.position.set(0, 0, -CUBE_SIZE * 0.75);
             mainCube.scale.setScalar(1.0);
 
+            // Set auto-rotation based on checkbox
+            autoRotate = autoRotateCheckbox.checked;
+
             document.body.appendChild(VRButton.createButton(renderer));
             renderer.xr.enabled = true;
             
             // VR-specific optimizations
             renderer.xr.setFramebufferScaleFactor(0.8);
             renderer.setPixelRatio(1);
-            renderer.xr.setReferenceSpaceType('local-floor'); // Better VR space reference
+            renderer.xr.setReferenceSpaceType('local-floor');
             
-            // Additional VR optimizations
             renderer.physicallyCorrectLights = false;
             renderer.toneMapping = THREE.NoToneMapping;
             renderer.outputEncoding = THREE.LinearEncoding;
@@ -799,12 +849,11 @@
 
         function animateVR() {
             renderer.setAnimationLoop(() => {
-                // Update VR interactions and movement
                 updateVRInteraction();
                 updateVRMovement();
                 updateDotOpacity();
+                updateAutoRotation();
 
-                // Optimize line updates
                 if (Math.random() < 0.3) {
                     updateLines();
                 }
@@ -876,7 +925,7 @@
             controls.dampingFactor = 0.05;
             controls.maxDistance = CUBE_SIZE * 2;
             controls.minDistance = 0.1;
-            controls.enablePan = false; // Disable panning for mobile
+            controls.enablePan = false;
             controls.rotateSpeed = 0.5;
             controls.enableZoom = true;
             controls.zoomSpeed = 1.0;
@@ -885,7 +934,9 @@
                 TWO: THREE.TOUCH.DOLLY_PAN
             };
             
-            // Set initial position for better mobile view
+            // Set auto-rotation based on checkbox
+            autoRotate = autoRotateCheckbox.checked;
+            
             camera.position.set(CUBE_SIZE * 0.75, CUBE_SIZE * 0.75, CUBE_SIZE * 0.75);
             camera.lookAt(0, 0, 0);
             controls.update();
@@ -898,6 +949,7 @@
                 controls.update();
                 updateLines();
                 updateDotOpacity();
+                updateAutoRotation();
                 renderer.render(scene, camera);
             }
             animate();
@@ -917,6 +969,9 @@
             controls.panSpeed = 1.0;
             controls.rotateSpeed = 0.5;
             
+            // Set auto-rotation based on checkbox
+            autoRotate = autoRotateCheckbox.checked;
+            
             menu.style.display = 'none';
             returnButton.style.display = 'block';
             
@@ -926,6 +981,7 @@
                 updateCamera();
                 updateLines();
                 updateDotOpacity();
+                updateAutoRotation();
                 renderer.render(scene, camera);
             }
             animate();
