@@ -106,6 +106,7 @@
         const LINE_THRESHOLD = 150;
         const CORNER_CUBE_SIZE = DOT_SIZE * 4;
         const ROTATION_SPEED = 0.0002;
+        const VR_ROTATION_SPEED = 5.0; // Much higher rotation speed for VR
         const LINE_WIDTH = 2;
         const LINE_GROWTH_SPEED = DOT_SPACING / 60;
         const MOVEMENT_SPEED = 0.8;
@@ -791,9 +792,21 @@
                 cameraGroup.position.addScaledVector(cameraDirection, -VR_MOVEMENT_SPEED);
             }
 
-            // Both grips for rotation around view direction
+            // Both grips for intuitive rotation
             if (vrMovementActive.left && vrMovementActive.right) {
-                mainCube.rotateOnAxis(cameraDirection.normalize(), ROTATION_SPEED * 2);
+                const pos1 = new THREE.Vector3();
+                const pos2 = new THREE.Vector3();
+                controller1.getWorldPosition(pos1);
+                controller2.getWorldPosition(pos2);
+
+                // Calculate the direction vector between controllers
+                const controllerDirection = pos2.clone().sub(pos1).normalize();
+                
+                // Get the rotation axis by crossing controller direction with camera direction
+                const rotationAxis = new THREE.Vector3().crossVectors(controllerDirection, cameraDirection).normalize();
+                
+                // Apply rotation based on controller movement
+                mainCube.rotateOnAxis(rotationAxis, VR_ROTATION_SPEED * 0.01);
             }
         }
 
